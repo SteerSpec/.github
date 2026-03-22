@@ -12,10 +12,10 @@ Your `CLAUDE.md` drifts. `.claude/agents/` mutates. New repos miss critical setu
 
 | Repo | Description |
 |------|-------------|
-| [strspc-spec](https://github.com/steerspec/strspc-spec) | The formal SteerSpec specification |
-| [strspc-rules](https://github.com/steerspec/strspc-rules) | The rule format that powers the spec |
-| [strspc-sync](https://github.com/steerspec/strspc-sync) | GitHub Action for template distribution |
-| [strspc-CLI](https://github.com/steerspec/strspc-CLI) | CLI tooling |
+| [strspc-rules](https://github.com/SteerSpec/strspc-rules) | Canonical rule format — self-referential rule definitions and schemas (Python) |
+| [strspc-manager](https://github.com/SteerSpec/strspc-manager) | Core enforcement engine — rule-lint, rule-diff, rule-eval, rule-resolve (Go) |
+| [strspc-sync](https://github.com/SteerSpec/strspc-sync) | GitHub Action & CLI for template distribution via PR (Go) |
+| [strspc-CLI](https://github.com/SteerSpec/strspc-CLI) | User-facing CLI tooling (Go) |
 
 **Website:** [steerspec.dev](https://steerspec.dev)
 
@@ -23,4 +23,4 @@ Your `CLAUDE.md` drifts. `.claude/agents/` mutates. New repos miss critical setu
 
 ## Status
 
-SteerSpec is in early development — the spec is drafted, tooling is being built. Things will change. Feedback welcome.
+SteerSpec is under active development. The rule format is defined, the core engine and sync action are functional, and the CLI is taking shape. Things will change. Feedback welcome.
