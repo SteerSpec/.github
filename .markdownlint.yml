@@ -1,0 +1,23 @@
+# Shared SteerSpec markdownlint config.
+#
+# The rules below are off because they are style opinions, not defects, and
+# every one of them fires on content that is perfectly correct. A required
+# check that demands a reformat of existing docs blocks the repo harder than
+# the missing-check problem it was added to solve.
+
+# Line length: fights tables and long link URLs, and prose width is not a defect.
+MD013: false
+
+# Repeated headings are fine under different parents — a brand guide legitimately
+# has "Light variant" under both Logo and Icon. Still catches true duplicates.
+MD024:
+  siblings_only: true
+
+# Inline HTML: used deliberately in profile READMEs for badges and layout.
+MD033: false
+
+# First line need not be a heading: profile READMEs often open with a banner.
+MD041: false
+
+# Table pipe spacing: pure cosmetics, and it fires on every table in the org.
+MD060: false
