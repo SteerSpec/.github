@@ -1,0 +1,52 @@
+name: CI
+
+# This repo had no PR-triggered workflow, so under the org ruleset its PRs
+# could never be approved — pr-auto-approve refuses to approve a PR with no
+# check runs, deliberately, so an approval always rests on evidence.
+#
+# The repo is markdown, and profile/README.md is what renders on the
+# organization page, so lint plus link integrity is the evidence available.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  markdown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: markdownlint
+        # Pinned: this is a required gate, so a markdownlint release that added
+        # or tightened a rule would start failing PRs that changed nothing.
+        run: npx --yes markdownlint-cli2@0.23.2 "**/*.md"
+
+      - name: Relative links and images resolve
+        # Deliberately local-only. Checking external URLs would make this gate
+        # depend on other people's uptime, and a flaky required check is worse
+        # than no check — it blocks merges for reasons nobody can fix.
+        run: |
+          rc=0
+          # Process substitution, not a pipe: a pipe would run this loop in a
+          # subshell and rc would be lost, reporting every broken link and then
+          # exiting 0.
+          while IFS= read -r f; do
+            while IFS= read -r link; do
+              link="${link%% *}"                 # drop an optional "Title"
+              case "$link" in
+                http://*|https://*|mailto:*|'#'*) continue ;;
+              esac
+              target="$(dirname "$f")/${link%%#*}"
+              if [ ! -e "$target" ]; then
+                echo "::error file=$f::broken relative link: $link"
+                rc=1
+              fi
+            done < <(grep -oE '\]\([^)]+\)' "$f" | sed 's/^](//; s/)$//')
+          done < <(find . -name '*.md' -not -path './.git/*')
+          exit $rc
