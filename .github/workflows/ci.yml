@@ -23,7 +23,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: markdownlint
-        run: npx --yes markdownlint-cli2 "**/*.md"
+        # Pinned: this is a required gate, so a markdownlint release that added
+        # or tightened a rule would start failing PRs that changed nothing.
+        run: npx --yes markdownlint-cli2@0.23.2 "**/*.md"
 
       - name: Relative links and images resolve
         # Deliberately local-only. Checking external URLs would make this gate
