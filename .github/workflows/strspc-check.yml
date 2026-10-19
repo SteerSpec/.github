@@ -1,0 +1,147 @@
+name: strspc check
+
+# Reusable workflow: evaluate a change against the rules a repository's
+# .strspc/config.yaml resolves, with the released strspc CLI.
+#
+# Caller:
+#
+#   jobs:
+#     check:
+#       uses: SteerSpec/.github/.github/workflows/strspc-check.yml@main
+#       secrets:
+#         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+#
+# Without ANTHROPIC_API_KEY the job resolves the rule sources and runs the
+# structural checks only (`strspc check --static-only`), so a repository
+# can adopt the workflow before it has an evaluator key. With the key, a
+# pull_request event evaluates the PR diff, a push the diff since the
+# previous commit, and anything else the diff against `base`.
+#
+# Exit codes: 1 (violations), 2 (configuration or source resolution) and
+# 3 (evaluator unavailable) all fail the job.
+
+on:
+  workflow_call:
+    inputs:
+      cli-version:
+        description: strspc release to install (X.Y.Z or latest).
+        type: string
+        required: false
+        default: latest
+      working-directory:
+        description: Directory holding .strspc/config.yaml.
+        type: string
+        required: false
+        default: .
+      base:
+        description: >
+          Git ref to diff against when the event provides none
+          (used for workflow_dispatch and schedule).
+        type: string
+        required: false
+        default: ""
+      format:
+        description: "Output format: human, json or github."
+        type: string
+        required: false
+        default: github
+      static-only:
+        description: Skip AI evaluation even when a key is available.
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      ANTHROPIC_API_KEY:
+        description: Enables the Claude evaluator; omitted means static checks only.
+        required: false
+      STRSPC_GITHUB_TOKEN:
+        description: >
+          Token for github:// rule sources in private repositories
+          (defaults to the workflow token).
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - uses: SteerSpec/strspc-CLI/.github/actions/setup-strspc@main
+        with:
+          version: ${{ inputs.cli-version }}
+
+      - name: Restore strspc caches
+        # cache.db holds evaluation verdicts keyed by rule and diff hash;
+        # cache/ holds fetched github:// rule sources (immutable tags never
+        # expire). Neither is reproducible from the checkout, so a miss is
+        # only slower, never wrong.
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: |
+            ${{ inputs.working-directory }}/.strspc/cache.db
+            ${{ inputs.working-directory }}/.strspc/cache
+          key: strspc-${{ github.repository }}-${{ github.sha }}
+          restore-keys: |
+            strspc-${{ github.repository }}-
+
+      # secrets.* cannot be used in `if:` and a job-level env would hand the
+      # key to every step; only a boolean leaves this step.
+      - name: Detect evaluator key
+        id: key
+        env:
+          HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' && !inputs.static-only }}
+        run: echo "has_key=${HAS_KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve diff target
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ inputs.base }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            mode="pr"; ref="$PR_NUMBER"
+          elif [ "$EVENT" = "push" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            mode="base"; ref="$BEFORE"
+          elif [ -n "$BASE" ]; then
+            mode="base"; ref="$BASE"
+          else
+            git fetch --quiet origin "$DEFAULT_BRANCH"
+            mode="base"; ref="origin/$DEFAULT_BRANCH"
+          fi
+          printf 'mode=%s\nref=%s\n' "$mode" "$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Check code changes (Claude)
+        if: steps.key.outputs.has_key == 'true'
+        run: strspc check "--$MODE" "$REF" --format "$FORMAT"
+        env:
+          MODE: ${{ steps.target.outputs.mode }}
+          REF: ${{ steps.target.outputs.ref }}
+          FORMAT: ${{ inputs.format }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Check rules (static only)
+        if: steps.key.outputs.has_key != 'true'
+        run: strspc check "--$MODE" "$REF" --static-only --format "$FORMAT"
+        env:
+          MODE: ${{ steps.target.outputs.mode }}
+          REF: ${{ steps.target.outputs.ref }}
+          FORMAT: ${{ inputs.format }}
+          GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
