@@ -68,8 +68,10 @@ jobs:
           strspc realm validate "$@"
 
       - name: Lint entity files
+        # Cross-file references are checked by the recursive realm
+        # validation above; `lint --cross-ref` only sees immediate children.
         run: |
-          set -- "$RULES_PATH" --cross-ref
+          set -- "$RULES_PATH"
           [ "$STRICT" = "true" ] && set -- "$@" --strict
           strspc lint "$@"
 

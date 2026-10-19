@@ -81,16 +81,16 @@ jobs:
         with:
           version: ${{ inputs.cli-version }}
 
-      - name: Restore strspc caches
-        # cache.db holds evaluation verdicts keyed by rule and diff hash;
-        # cache/ holds fetched github:// rule sources (immutable tags never
-        # expire). Neither is reproducible from the checkout, so a miss is
-        # only slower, never wrong.
+      - name: Restore evaluation cache
+        # cache.db holds evaluation verdicts keyed by rule and diff hash; a
+        # miss is only slower, never wrong. Fetched github:// sources under
+        # .strspc/cache/ are deliberately not saved: a cache written on the
+        # default branch is restorable by fork pull requests, which would
+        # expose rules fetched from a private repository with
+        # STRSPC_GITHUB_TOKEN to anyone who can open a PR.
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
-          path: |
-            ${{ inputs.working-directory }}/.strspc/cache.db
-            ${{ inputs.working-directory }}/.strspc/cache
+          path: ${{ inputs.working-directory }}/.strspc/cache.db
           key: strspc-${{ github.repository }}-${{ github.sha }}
           restore-keys: |
             strspc-${{ github.repository }}-
