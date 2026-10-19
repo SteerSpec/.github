@@ -91,6 +91,13 @@ jobs:
           && github.event_name == 'push'
           && github.event.before != '0000000000000000000000000000000000000000'
         run: |
+          # After a force-push the previous commit may no longer be reachable
+          # from any ref, so fetch-depth: 0 does not guarantee it is present.
+          if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null \
+            && ! git fetch --quiet origin "$BASE" 2>/dev/null; then
+            echo "::warning::previous commit ${BASE} is unreachable (force-push?); skipping lifecycle diff"
+            exit 0
+          fi
           set -- "$RULES_PATH" --base "$BASE"
           [ "$STRICT" = "true" ] && set -- "$@" --strict
           strspc diff "$@"
