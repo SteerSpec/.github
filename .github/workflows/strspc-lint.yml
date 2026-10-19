@@ -1,0 +1,105 @@
+name: strspc lint
+
+# Reusable workflow: validate a Realm directory and its lifecycle
+# transitions with the released strspc CLI.
+#
+# Caller (any SteerSpec repository with a rules/ directory):
+#
+#   jobs:
+#     rules:
+#       uses: SteerSpec/.github/.github/workflows/strspc-lint.yml@main
+#       with:
+#         path: rules/
+#
+# Diff base: a pull_request event compares against the PR base, a push
+# against the commit before it (skipped for a branch's first push). Pass
+# `diff: false` to skip lifecycle validation, for example on a release PR
+# that aggregates several promotion steps.
+
+on:
+  workflow_call:
+    inputs:
+      path:
+        description: Realm directory to validate.
+        type: string
+        required: false
+        default: rules/
+      cli-version:
+        description: strspc release to install (X.Y.Z or latest).
+        type: string
+        required: false
+        default: latest
+      strict:
+        description: Treat warnings as errors.
+        type: boolean
+        required: false
+        default: true
+      diff:
+        description: Validate lifecycle transitions against the diff base.
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      RULES_PATH: ${{ inputs.path }}
+      STRICT: ${{ inputs.strict }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - uses: SteerSpec/strspc-CLI/.github/actions/setup-strspc@62318da295bfc753aa77ef676466b1422b32e211  # main, 2026-10-19 (#84)
+        with:
+          version: ${{ inputs.cli-version }}
+
+      - name: Validate realm
+        run: |
+          set -- "$RULES_PATH" --recursive
+          [ "$STRICT" = "true" ] && set -- "$@" --strict
+          strspc realm validate "$@"
+
+      - name: Lint entity files
+        # Cross-file references are checked by the recursive realm
+        # validation above; `lint --cross-ref` only sees immediate children.
+        run: |
+          set -- "$RULES_PATH"
+          [ "$STRICT" = "true" ] && set -- "$@" --strict
+          strspc lint "$@"
+
+      - name: Diff rules (pull_request)
+        if: inputs.diff && github.event_name == 'pull_request'
+        run: |
+          set -- "$RULES_PATH" --pr "$PR_NUMBER"
+          [ "$STRICT" = "true" ] && set -- "$@" --strict
+          strspc diff "$@"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      - name: Diff rules (push)
+        if: >-
+          inputs.diff
+          && github.event_name == 'push'
+          && github.event.before != '0000000000000000000000000000000000000000'
+        run: |
+          # After a force-push the previous commit may no longer be reachable
+          # from any ref, so fetch-depth: 0 does not guarantee it is present.
+          if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null \
+            && ! git fetch --quiet origin "$BASE" 2>/dev/null; then
+            echo "::warning::previous commit ${BASE} is unreachable (force-push?); skipping lifecycle diff"
+            exit 0
+          fi
+          set -- "$RULES_PATH" --base "$BASE"
+          [ "$STRICT" = "true" ] && set -- "$@" --strict
+          strspc diff "$@"
+        env:
+          BASE: ${{ github.event.before }}

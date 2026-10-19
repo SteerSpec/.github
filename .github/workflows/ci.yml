@@ -22,6 +22,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: actionlint
+        # The reusable strspc workflows are consumed from this repository,
+        # so a syntax error here breaks every caller's CI at once.
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7  # v2.2.0
+
       - name: markdownlint
         # Pinned: this is a required gate, so a markdownlint release that added
         # or tightened a rule would start failing PRs that changed nothing.
