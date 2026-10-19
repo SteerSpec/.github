@@ -50,6 +50,16 @@ on:
         type: boolean
         required: false
         default: false
+      cache:
+        description: >
+          Save the evaluation cache (.strspc/cache.db) to the Actions cache.
+          Off by default: the cache stores explanations of evaluated rules,
+          and a cache written on the default branch of a public repository
+          is restorable by fork pull requests. Enable it only where every
+          resolved rule source is public anyway.
+        type: boolean
+        required: false
+        default: false
     secrets:
       ANTHROPIC_API_KEY:
         description: Enables the Claude evaluator; omitted means static checks only.
@@ -82,12 +92,11 @@ jobs:
           version: ${{ inputs.cli-version }}
 
       - name: Restore evaluation cache
-        # cache.db holds evaluation verdicts keyed by rule and diff hash; a
-        # miss is only slower, never wrong. Fetched github:// sources under
-        # .strspc/cache/ are deliberately not saved: a cache written on the
-        # default branch is restorable by fork pull requests, which would
-        # expose rules fetched from a private repository with
-        # STRSPC_GITHUB_TOKEN to anyone who can open a PR.
+        # Opt-in (see the `cache` input): cache.db holds the evaluator's
+        # verdicts and explanations keyed by rule and diff hash, so it is
+        # derived from the rule text. A miss is only slower, never wrong.
+        # Fetched github:// sources under .strspc/cache/ are never saved.
+        if: inputs.cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: ${{ inputs.working-directory }}/.strspc/cache.db
