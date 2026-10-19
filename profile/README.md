@@ -25,9 +25,9 @@ Your `CLAUDE.md` drifts. `.claude/agents/` mutates. New repos miss critical setu
 
 ## Status
 
-SteerSpec is under active development, and most of it ships today.
+SteerSpec is under active development, and much of it ships today.
 
-The rule format and the core engine are published. `strspc-sync` distributes templates by pull request, monitors targets for drift and flags conflicts across the fleet. `strspc-pr-review` approves pull requests on Copilot's verdict — a clean review, or a configurable number of review rounds — and is on the [GitHub Marketplace](https://github.com/marketplace/actions/pr-auto-approve-copilot). The CLI renders, lints and diffs rule files and evaluates changes against them. A hosted API is planned and not yet built.
+The rule format and the core engine are published. `strspc-sync` distributes templates by pull request, monitors targets for drift and flags conflicts across the fleet. `strspc-pr-review` approves pull requests on Copilot's verdict — a clean review, or a configurable number of review rounds — and is on the [GitHub Marketplace](https://github.com/marketplace/actions/pr-auto-approve-copilot). The CLI renders, lints and diffs rule files; AI evaluation of changes against them is planned. A hosted API is planned and not yet built.
 
 The specification itself remains `v0.1.0-draft` — the tooling is further along than the spec it implements. Things will change. Feedback welcome.
 
