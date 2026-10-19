@@ -87,7 +87,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: SteerSpec/strspc-CLI/.github/actions/setup-strspc@main
+      - uses: SteerSpec/strspc-CLI/.github/actions/setup-strspc@62318da295bfc753aa77ef676466b1422b32e211  # main, 2026-10-19 (#84)
         with:
           version: ${{ inputs.cli-version }}
 
