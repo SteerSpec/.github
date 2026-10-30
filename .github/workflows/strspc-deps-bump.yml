@@ -24,11 +24,12 @@ name: strspc deps bump
 #         path: rules/
 #       secrets:
 #         STRSPC_GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN }}
+#         STRSPC_READ_TOKEN: ${{ secrets.STRSPC_READ_TOKEN }}
 #
 # Pull requests opened with the default workflow token do not trigger other
 # workflows, so the bump PR would get no checks. Pass STRSPC_GITHUB_TOKEN (a
-# token with contents and pull-requests write, and read access to any private
-# dependency source) to have its checks run.
+# token with contents and pull-requests write) to have its checks run. Private
+# dependency sources need STRSPC_READ_TOKEN, a read-only token for them.
 
 on:
   workflow_call:
@@ -58,8 +59,13 @@ on:
     secrets:
       STRSPC_GITHUB_TOKEN:
         description: >
-          Token used to read private dependency sources and to open the pull
-          request so that its checks run. Falls back to the workflow token.
+          Token used to push the bump branch and open the pull request so that
+          its checks run. Falls back to the workflow token.
+        required: false
+      STRSPC_READ_TOKEN:
+        description: >
+          Read-only token for private dependency sources. It is the only
+          credential the CLI step sees. Falls back to the workflow token.
         required: false
 
 permissions:
@@ -68,6 +74,11 @@ permissions:
 jobs:
   bump:
     runs-on: ubuntu-latest
+    # One run at a time per bump branch: overlapping runs would reset and
+    # recommit the same branch.
+    concurrency:
+      group: strspc-deps-bump-${{ github.repository }}-${{ inputs.branch }}
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write
@@ -97,13 +108,11 @@ jobs:
 
       - name: Upgrade dependencies
         id: upgrade
-        # The CLI needs the token only to download dependency sources. With
-        # STRSPC_GITHUB_TOKEN set, that token also carries whatever write
-        # scope the caller gave it, so use a fine-grained token limited to
-        # this repository's contents and pull requests plus read on the
-        # private sources. Without it, this step gets the job's workflow token.
+        # The CLI is third-party code from the job's point of view, so it
+        # never sees the write-capable token: only STRSPC_READ_TOKEN, or the
+        # workflow token when that is unset.
         env:
-          GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ secrets.STRSPC_READ_TOKEN || github.token }}
         run: |
           set +e
           strspc realm dep upgrade --dir "$RULES_PATH" > "$RUNNER_TEMP/upgrade.txt" 2>&1
@@ -166,3 +175,15 @@ jobs:
           else
             gh pr create --base "$base" --head "$BUMP_BRANCH" --title "$title" --body "$body"
           fi
+
+      - name: Close a stale bump pull request
+        if: steps.upgrade.outputs.changed == 'false'
+        env:
+          BASE_BRANCH: ${{ steps.base.outputs.branch }}
+          GH_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          stale="$(gh pr list --head "$BUMP_BRANCH" --base "$BASE_BRANCH" --state open --json number,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')"
+          [ -z "$stale" ] || gh pr close "$stale" --delete-branch \
+            --comment "Dependencies are already up to date on $BASE_BRANCH; closing."
