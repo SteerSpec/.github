@@ -1,0 +1,296 @@
+name: strspc deps bump
+
+# Reusable workflow: keep a Realm's dependencies on their latest release.
+# Dependabot and Renovate cannot read realm.json, so this runs
+# `strspc realm dep upgrade` (strspc >= 1.25.0), and when something moved it
+# opens or updates a single pull request. It never merges.
+#
+# Two jobs keep the CLI away from write credentials. `upgrade` runs strspc
+# with read-only permissions and hands realm.json over as an artifact; `pr`
+# runs no strspc, re-checks the artifact, and commits it through the GraphQL
+# API, so GitHub signs the commit. If the upgrade breaks the realm, realm.json
+# is left untouched and the run fails.
+#
+# Caller (any repository with a rules/ directory):
+#
+#   on:
+#     schedule:
+#       - cron: "17 6 * * *"
+#     workflow_dispatch:
+#   permissions:
+#     contents: write
+#     pull-requests: write
+#   jobs:
+#     bump:
+#       uses: SteerSpec/.github/.github/workflows/strspc-deps-bump.yml@v1
+#       with:
+#         path: rules/
+#       secrets:
+#         STRSPC_GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN }}
+#         STRSPC_READ_TOKEN: ${{ secrets.STRSPC_READ_TOKEN }}
+#
+# Pull requests opened with the default workflow token do not trigger other
+# workflows, so the bump PR would get no checks. Pass STRSPC_GITHUB_TOKEN (a
+# token with contents and pull-requests write) to have its checks run. Private
+# dependency sources need STRSPC_READ_TOKEN, a read-only token for them.
+
+on:
+  workflow_call:
+    inputs:
+      path:
+        description: Realm directory holding realm.json.
+        type: string
+        required: false
+        default: rules/
+      cli-version:
+        description: >
+          strspc release to install (X.Y.Z or latest). Empty uses the org
+          variable STRSPC_CLI_VERSION, then latest.
+        type: string
+        required: false
+        default: ""
+      base-branch:
+        description: Branch the pull request targets. Empty uses the default branch.
+        type: string
+        required: false
+        default: ""
+      branch:
+        description: Branch the bump is committed to; reset to the base on every run.
+        type: string
+        required: false
+        default: chore/strspc-deps-bump
+    secrets:
+      STRSPC_GITHUB_TOKEN:
+        description: >
+          Token used to push the bump branch and open the pull request so that
+          its checks run. Falls back to the workflow token.
+        required: false
+      STRSPC_READ_TOKEN:
+        description: >
+          Read-only token for private dependency sources, the only credential
+          the CLI sees. Without it the CLI gets the read-only workflow token
+          of the `upgrade` job, which cannot read other private repositories.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      RULES_PATH: ${{ inputs.path }}
+      BASE_INPUT: ${{ inputs.base-branch }}
+      REPO: ${{ github.repository }}
+    outputs:
+      changed: ${{ steps.upgrade.outputs.changed }}
+      artifact: ${{ steps.name.outputs.artifact }}
+      sha: ${{ steps.checkout-sha.outputs.sha }}
+    steps:
+      - name: Resolve base branch
+        id: base
+        # Always build on the base branch, never on whatever ref triggered
+        # the run (workflow_dispatch can start from any branch).
+        run: |
+          echo "branch=${BASE_INPUT:-$(gh api "repos/$REPO" --jq .default_branch)}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          ref: ${{ steps.base.outputs.branch }}
+          persist-credentials: false
+
+      - name: Name the artifact
+        id: name
+        # Unique per path and branch, so a caller that runs this workflow
+        # for several realms in one run does not collide on the name.
+        env:
+          BUMP_BRANCH: ${{ inputs.branch }}
+        run: |
+          echo "artifact=strspc-deps-bump-$(printf '%s|%s' "$RULES_PATH" "$BUMP_BRANCH" | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+
+      - name: Record the commit the upgrade is built on
+        id: checkout-sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: SteerSpec/strspc-CLI/.github/actions/setup-strspc@1ce43e4484d9451083c0774a9926178889d684f2  # main, 2026-10-20 (#92)
+        with:
+          version: ${{ inputs.cli-version || vars.STRSPC_CLI_VERSION || 'latest' }}
+
+      - name: Upgrade dependencies
+        id: upgrade
+        # This job's workflow token is read-only, so even the fallback
+        # credential cannot write to the repository.
+        env:
+          GITHUB_TOKEN: ${{ secrets.STRSPC_READ_TOKEN || github.token }}
+        run: |
+          set +e
+          strspc realm dep upgrade --dir "$RULES_PATH" > "$RUNNER_TEMP/upgrade.txt" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/upgrade.txt"
+          [ "$rc" -eq 0 ] || exit "$rc"
+
+          file="$(realpath -m --relative-to="$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/$RULES_PATH/realm.json")"
+          if git diff --quiet -- "$file"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir "$RUNNER_TEMP/bump"
+          cp "$file" "$RUNNER_TEMP/bump/realm.json"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Hand over the result
+        if: steps.upgrade.outputs.changed == 'true'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: ${{ runner.temp }}/bump
+          if-no-files-found: error
+          retention-days: 1
+
+  pr:
+    needs: upgrade
+    runs-on: ubuntu-latest
+    # One run at a time per bump branch: overlapping runs would reset and
+    # recommit the same branch.
+    concurrency:
+      group: strspc-deps-bump-${{ github.repository }}-${{ inputs.branch }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      RULES_PATH: ${{ inputs.path }}
+      BASE_INPUT: ${{ inputs.base-branch }}
+      BUMP_BRANCH: ${{ inputs.branch }}
+      REPO: ${{ github.repository }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ needs.upgrade.outputs.sha }}
+      GH_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
+    steps:
+      # No strspc runs here and nothing is checked out: this job only moves
+      # the artifact into a commit, after re-checking it.
+      - name: Resolve base branch and realm file
+        id: ctx
+        run: |
+          echo "base=${BASE_INPUT:-$(gh api "repos/$REPO" --jq .default_branch)}" >> "$GITHUB_OUTPUT"
+          echo "file=$(realpath -m --relative-to=/ "/$RULES_PATH/realm.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the result
+        if: needs.upgrade.outputs.changed == 'true'
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        with:
+          name: ${{ needs.upgrade.outputs.artifact }}
+          path: ${{ runner.temp }}/bump
+
+      - name: Decide whether the base differs
+        id: diff
+        env:
+          FILE: ${{ steps.ctx.outputs.file }}
+        run: |
+          set -euo pipefail
+          bump="$RUNNER_TEMP/bump"
+          if [ ! -f "$bump/realm.json" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ "$(wc -c < "$bump/realm.json")" -le 1048576 ]
+          gh api "repos/$REPO/contents/$FILE?ref=$SHA" --jq .content | base64 -d > "$RUNNER_TEMP/base-realm.json"
+          if cmp -s "$RUNNER_TEMP/base-realm.json" "$bump/realm.json"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The artifact is untrusted and is never committed. It only says
+          # which dependencies moved to which version. Each move must be a
+          # strict upgrade to a plain X.Y.Z, and the new source must be the
+          # old one with only its @vX.Y.Z ref replaced. The committed file is
+          # then rebuilt from the base, so nothing else can ride along, and
+          # the change list for the PR comes from the same computation.
+          jq -n --slurpfile a "$bump/realm.json" --slurpfile b "$RUNNER_TEMP/base-realm.json" '
+            def plain: test("^[0-9]+[.][0-9]+[.][0-9]+$");
+            def parts: split(".") | map(tonumber);
+            if ($a | length) != 1 then error("artifact is not a single JSON document") else . end
+            | $a[0] as $A | $b[0] as $B
+            | if ($A | type) != "object" then error("artifact is not an object")
+              elif ($A | del(.dependencies)) != ($B | del(.dependencies)) then error("fields outside dependencies changed")
+              elif ($A.dependencies | map(.realm_id)) != ($B.dependencies | map(.realm_id)) then error("the dependency set changed")
+              else
+                [ range(0; $B.dependencies | length) as $i
+                  | $A.dependencies[$i] as $n | $B.dependencies[$i] as $o
+                  | if $n == $o then {dep: $o}
+                    elif ($n.version | plain | not) or ($o.version | plain | not) then error("non-release version for \($n.realm_id)")
+                    elif ($n.version | parts) <= ($o.version | parts) then error("\($n.realm_id) is not a strict upgrade")
+                    elif ($n | del(.version, .source)) != ($o | del(.version, .source)) then error("unexpected change to \($n.realm_id)")
+                    else
+                      ($o.source | sub("@v" + ($o.version | gsub("[.]"; "[.]")) + "(?<r>/|$)"; "@v\($n.version)\(.r)")) as $want
+                      | if $want == $o.source then error("source of \($o.realm_id) does not pin @v\($o.version)")
+                        elif $n.source != $want then error("source of \($n.realm_id) is not the old one with the new ref")
+                        else {dep: ($o | .version = $n.version | .source = $want), change: "\($n.realm_id): \($o.version) -> \($n.version)"} end
+                    end ] as $items
+                | if all($items[]; has("change") | not) then error("artifact differs from the base but upgrades no dependency")
+                  else {changes: [$items[] | .change // empty], out: ($B | .dependencies = [$items[] | .dep])} end
+              end' > "$RUNNER_TEMP/checked.json"
+          jq -r '.changes[]' "$RUNNER_TEMP/checked.json" > "$bump/changes.txt"
+          jq --indent 2 '.out' "$RUNNER_TEMP/checked.json" > "$bump/checked-realm.json"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the pull request
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          FILE: ${{ steps.ctx.outputs.file }}
+          BASE_BRANCH: ${{ steps.ctx.outputs.base }}
+        run: |
+          set -euo pipefail
+          bump="$RUNNER_TEMP/bump"
+          changes="$(cat "$bump/changes.txt")"
+          ids="$(printf '%s\n' "$changes" | cut -d: -f1 | paste -sd, - | sed 's/,/, /g')"
+          title="chore(deps): bump strspc realm dependencies"
+          [ -z "$ids" ] || title="chore(deps): bump $ids"
+
+          # Start the bump branch from the commit the upgrade was built on,
+          # then add one commit.
+          if gh api "repos/$REPO/git/ref/heads/$BUMP_BRANCH" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$REPO/git/refs/heads/$BUMP_BRANCH" -f sha="$SHA" -F force=true > /dev/null
+          else
+            gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BUMP_BRANCH" -f sha="$SHA" > /dev/null
+          fi
+
+          jq -n \
+            --arg repo "$REPO" --arg branch "$BUMP_BRANCH" --arg oid "$SHA" \
+            --arg headline "$title" --arg path "$FILE" \
+            --arg contents "$(base64 < "$bump/checked-realm.json" | tr -d '\n')" \
+            '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+              variables: {input: {
+                branch: {repositoryNameWithOwner: $repo, branchName: $branch},
+                expectedHeadOid: $oid,
+                message: {headline: $headline},
+                fileChanges: {additions: [{path: $path, contents: $contents}]}}}}' \
+            | gh api graphql --input - > /dev/null
+
+          # shellcheck disable=SC2016 # backticks are literal Markdown
+          body="$(printf 'Dependency upgrades resolved by `strspc realm dep upgrade`. Make sure the repository checks pass on this pull request before merging.\n\n%s\n\nReview the changelog of each dependency before merging. This pull request is refreshed on every run and is never merged automatically.\n' "$(printf '%s\n' "$changes" | sed 's/^/- /')")"
+
+          existing="$(gh pr list --head "$BUMP_BRANCH" --base "$BASE_BRANCH" --state open --json number,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body "$body"
+            echo "Updated pull request #$existing"
+          else
+            gh pr create --base "$BASE_BRANCH" --head "$BUMP_BRANCH" --title "$title" --body "$body"
+          fi
+
+      - name: Close a stale bump pull request
+        if: steps.diff.outputs.changed == 'false'
+        env:
+          BASE_BRANCH: ${{ steps.ctx.outputs.base }}
+        run: |
+          set -euo pipefail
+          stale="$(gh pr list --head "$BUMP_BRANCH" --base "$BASE_BRANCH" --state open --json number,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')"
+          [ -z "$stale" ] || gh pr close "$stale" --delete-branch \
+            --comment "Dependencies are already up to date on $BASE_BRANCH; closing."
