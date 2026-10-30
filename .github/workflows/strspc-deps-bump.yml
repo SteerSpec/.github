@@ -108,8 +108,7 @@ jobs:
           cat "$RUNNER_TEMP/upgrade.txt"
           [ "$rc" -eq 0 ] || exit "$rc"
 
-          file="${RULES_PATH#./}"
-          file="${file%/}/realm.json"
+          file="$(realpath -m --relative-to="$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/$RULES_PATH/realm.json")"
           echo "file=$file" >> "$GITHUB_OUTPUT"
           if git diff --quiet -- "$file"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -129,9 +128,10 @@ jobs:
           sha="$(git rev-parse HEAD)"
 
           # Lines look like "  dev.steerspec.core: 1.8.0 -> 1.11.0".
-          changes="$(grep -- ' -> ' "$RUNNER_TEMP/upgrade.txt" | sed 's/^ *//')"
+          changes="$(grep -- ' -> ' "$RUNNER_TEMP/upgrade.txt" | sed 's/^ *//' || true)"
           ids="$(printf '%s\n' "$changes" | cut -d: -f1 | paste -sd, - | sed 's/,/, /g')"
-          title="chore(deps): bump $ids"
+          title="chore(deps): bump strspc realm dependencies"
+          [ -z "$ids" ] || title="chore(deps): bump $ids"
 
           # Start the bump branch from the current base, then add one commit.
           if gh api "repos/$REPO/git/ref/heads/$BUMP_BRANCH" > /dev/null 2>&1; then
