@@ -86,6 +86,7 @@ jobs:
       REPO: ${{ github.repository }}
     outputs:
       changed: ${{ steps.upgrade.outputs.changed }}
+      artifact: ${{ steps.name.outputs.artifact }}
       sha: ${{ steps.checkout-sha.outputs.sha }}
     steps:
       - name: Resolve base branch
@@ -101,6 +102,15 @@ jobs:
         with:
           ref: ${{ steps.base.outputs.branch }}
           persist-credentials: false
+
+      - name: Name the artifact
+        id: name
+        # Unique per path and branch, so a caller that runs this workflow
+        # for several realms in one run does not collide on the name.
+        env:
+          BUMP_BRANCH: ${{ inputs.branch }}
+        run: |
+          echo "artifact=strspc-deps-bump-$(printf '%s|%s' "$RULES_PATH" "$BUMP_BRANCH" | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
 
       - name: Record the commit the upgrade is built on
         id: checkout-sha
@@ -120,6 +130,7 @@ jobs:
           set +e
           strspc realm dep upgrade --dir "$RULES_PATH" > "$RUNNER_TEMP/upgrade.txt" 2>&1
           rc=$?
+          set -e
           cat "$RUNNER_TEMP/upgrade.txt"
           [ "$rc" -eq 0 ] || exit "$rc"
 
@@ -128,15 +139,15 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "changed=true" >> "$GITHUB_OUTPUT"
           mkdir "$RUNNER_TEMP/bump"
           cp "$file" "$RUNNER_TEMP/bump/realm.json"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Hand over the result
         if: steps.upgrade.outputs.changed == 'true'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
         with:
-          name: strspc-deps-bump
+          name: ${{ steps.name.outputs.artifact }}
           path: ${{ runner.temp }}/bump
           if-no-files-found: error
           retention-days: 1
@@ -157,6 +168,7 @@ jobs:
       BASE_INPUT: ${{ inputs.base-branch }}
       BUMP_BRANCH: ${{ inputs.branch }}
       REPO: ${{ github.repository }}
+      GH_REPO: ${{ github.repository }}
       SHA: ${{ needs.upgrade.outputs.sha }}
       GH_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
     steps:
@@ -172,7 +184,7 @@ jobs:
         if: needs.upgrade.outputs.changed == 'true'
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
         with:
-          name: strspc-deps-bump
+          name: ${{ needs.upgrade.outputs.artifact }}
           path: ${{ runner.temp }}/bump
 
       - name: Decide whether the base differs
