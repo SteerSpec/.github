@@ -15,6 +15,10 @@ name: strspc lint
 # against the commit before it (skipped for a branch's first push). Pass
 # `diff: false` to skip lifecycle validation, for example on a release PR
 # that aggregates several promotion steps.
+#
+# A realm is validated against the schemas of the core version it pins. Only
+# the core realm passes `core: true`, which validates it against its own
+# _schema/ and needs strspc 1.27.0 or later.
 
 on:
   workflow_call:
@@ -39,6 +43,11 @@ on:
         type: boolean
         required: false
         default: true
+      core:
+        description: The path is the core realm; validate it against its own _schema/.
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -52,6 +61,7 @@ jobs:
     env:
       RULES_PATH: ${{ inputs.path }}
       STRICT: ${{ inputs.strict }}
+      CORE: ${{ inputs.core }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
@@ -65,6 +75,7 @@ jobs:
         run: |
           set -- "$RULES_PATH" --recursive
           [ "$STRICT" = "true" ] && set -- "$@" --strict
+          [ "$CORE" = "true" ] && set -- "$@" --core
           strspc realm validate "$@"
 
       - name: Lint entity files
@@ -73,6 +84,7 @@ jobs:
         run: |
           set -- "$RULES_PATH"
           [ "$STRICT" = "true" ] && set -- "$@" --strict
+          [ "$CORE" = "true" ] && set -- "$@" --core
           strspc lint "$@"
 
       - name: Diff rules (pull_request)
