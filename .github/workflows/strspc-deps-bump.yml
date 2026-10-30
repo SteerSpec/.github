@@ -75,13 +75,20 @@ jobs:
       RULES_PATH: ${{ inputs.path }}
       BASE_INPUT: ${{ inputs.base-branch }}
       BUMP_BRANCH: ${{ inputs.branch }}
-      GH_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
-      GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
       REPO: ${{ github.repository }}
     steps:
+      - name: Resolve base branch
+        id: base
+        # Always build on the base branch, never on whatever ref triggered
+        # the run (workflow_dispatch can start from any branch).
+        run: |
+          echo "branch=${BASE_INPUT:-$(gh api "repos/$REPO" --jq .default_branch)}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
         with:
-          ref: ${{ inputs.base-branch }}
+          ref: ${{ steps.base.outputs.branch }}
           persist-credentials: false
 
       - uses: SteerSpec/strspc-CLI/.github/actions/setup-strspc@1ce43e4484d9451083c0774a9926178889d684f2  # main, 2026-10-20 (#92)
@@ -90,6 +97,10 @@ jobs:
 
       - name: Upgrade dependencies
         id: upgrade
+        # Only a read token here: the CLI downloads dependency sources and
+        # nothing in this step needs write access.
+        env:
+          GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
         run: |
           set +e
           strspc realm dep upgrade --dir "$RULES_PATH" > "$RUNNER_TEMP/upgrade.txt" 2>&1
@@ -110,9 +121,11 @@ jobs:
         if: steps.upgrade.outputs.changed == 'true'
         env:
           REALM_FILE: ${{ steps.upgrade.outputs.file }}
+          BASE_BRANCH: ${{ steps.base.outputs.branch }}
+          GH_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
         run: |
           set -euo pipefail
-          base="${BASE_INPUT:-$(gh api "repos/$REPO" --jq .default_branch)}"
+          base="$BASE_BRANCH"
           sha="$(git rev-parse HEAD)"
 
           # Lines look like "  dev.steerspec.core: 1.8.0 -> 1.11.0".
@@ -142,7 +155,8 @@ jobs:
           # shellcheck disable=SC2016 # backticks are literal Markdown
           body="$(printf 'Dependency upgrades resolved by `strspc realm dep upgrade`; the realm validates (strict, recursive) with them.\n\n%s\n\nReview the changelog of each dependency before merging. This pull request is refreshed on every run and is never merged automatically.\n' "$(printf '%s\n' "$changes" | sed 's/^/- /')")"
 
-          existing="$(gh pr list --head "$BUMP_BRANCH" --base "$base" --state open --json number --jq '.[0].number // empty')"
+          existing="$(gh pr list --head "$BUMP_BRANCH" --base "$base" --state open --json number,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')"
           if [ -n "$existing" ]; then
             gh pr edit "$existing" --title "$title" --body "$body"
             echo "Updated pull request #$existing"
