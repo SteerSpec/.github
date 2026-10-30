@@ -193,29 +193,37 @@ jobs:
             exit 0
           fi
 
-          # The artifact is untrusted. Accept it only if it is one JSON
-          # document that differs from the base solely in the version and the
-          # source ref of existing dependencies, and derive the change list
-          # (used for the PR title and body) from that difference.
-          jq -rn --slurpfile a "$bump/realm.json" --slurpfile b "$RUNNER_TEMP/base-realm.json" '
-            def semver: test("^[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.-]+)?$");
-            def noref: sub("@[^/]*"; "@");
+          # The artifact is untrusted and is never committed. It only says
+          # which dependencies moved to which version. Each move must be a
+          # strict upgrade to a plain X.Y.Z, and the new source must be the
+          # old one with only its @vX.Y.Z ref replaced. The committed file is
+          # then rebuilt from the base, so nothing else can ride along, and
+          # the change list for the PR comes from the same computation.
+          jq -n --slurpfile a "$bump/realm.json" --slurpfile b "$RUNNER_TEMP/base-realm.json" '
+            def plain: test("^[0-9]+[.][0-9]+[.][0-9]+$");
+            def parts: split(".") | map(tonumber);
             if ($a | length) != 1 then error("artifact is not a single JSON document") else . end
             | $a[0] as $A | $b[0] as $B
             | if ($A | type) != "object" then error("artifact is not an object")
               elif ($A | del(.dependencies)) != ($B | del(.dependencies)) then error("fields outside dependencies changed")
               elif ($A.dependencies | map(.realm_id)) != ($B.dependencies | map(.realm_id)) then error("the dependency set changed")
               else
-                [ range(0; $A.dependencies | length) as $i
+                [ range(0; $B.dependencies | length) as $i
                   | $A.dependencies[$i] as $n | $B.dependencies[$i] as $o
-                  | select($n != $o)
-                  | if ($n.version | semver | not) then error("invalid version for \($n.realm_id)")
+                  | if $n == $o then {dep: $o}
+                    elif ($n.version | plain | not) or ($o.version | plain | not) then error("non-release version for \($n.realm_id)")
+                    elif ($n.version | parts) <= ($o.version | parts) then error("\($n.realm_id) is not a strict upgrade")
                     elif ($n | del(.version, .source)) != ($o | del(.version, .source)) then error("unexpected change to \($n.realm_id)")
-                    elif ($n.source | noref) != ($o.source | noref) then error("source of \($n.realm_id) changed beyond its ref")
-                    elif ($n.source | test("@v" + ($n.version | gsub("[.]"; "[.]")) + "(/|$)") | not) then error("source ref of \($n.realm_id) does not match its version")
-                    else "\($n.realm_id): \($o.version) -> \($n.version)" end ]
-                | if length == 0 then error("artifact differs from the base but upgrades no dependency") else .[] end
-              end' > "$bump/changes.txt"
+                    else
+                      ($o.source | sub("@v" + ($o.version | gsub("[.]"; "[.]")) + "(?<r>/|$)"; "@v\($n.version)\(.r)")) as $want
+                      | if $n.source != $want then error("source of \($n.realm_id) is not the old one with the new ref")
+                        else {dep: ($o | .version = $n.version | .source = $want), change: "\($n.realm_id): \($o.version) -> \($n.version)"} end
+                    end ] as $items
+                | if all($items[]; has("change") | not) then error("artifact differs from the base but upgrades no dependency")
+                  else {changes: [$items[] | .change // empty], out: ($B | .dependencies = [$items[] | .dep])} end
+              end' > "$RUNNER_TEMP/checked.json"
+          jq -r '.changes[]' "$RUNNER_TEMP/checked.json" > "$bump/changes.txt"
+          jq --indent 2 '.out' "$RUNNER_TEMP/checked.json" > "$bump/checked-realm.json"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Open or update the pull request
@@ -242,7 +250,7 @@ jobs:
           jq -n \
             --arg repo "$REPO" --arg branch "$BUMP_BRANCH" --arg oid "$SHA" \
             --arg headline "$title" --arg path "$FILE" \
-            --arg contents "$(base64 < "$bump/realm.json" | tr -d '\n')" \
+            --arg contents "$(base64 < "$bump/checked-realm.json" | tr -d '\n')" \
             '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
               variables: {input: {
                 branch: {repositoryNameWithOwner: $repo, branchName: $branch},
