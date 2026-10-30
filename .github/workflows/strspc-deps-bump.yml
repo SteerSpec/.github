@@ -97,8 +97,11 @@ jobs:
 
       - name: Upgrade dependencies
         id: upgrade
-        # Only a read token here: the CLI downloads dependency sources and
-        # nothing in this step needs write access.
+        # The CLI needs the token only to download dependency sources. With
+        # STRSPC_GITHUB_TOKEN set, that token also carries whatever write
+        # scope the caller gave it, so use a fine-grained token limited to
+        # this repository's contents and pull requests plus read on the
+        # private sources. Without it, this step gets the job's workflow token.
         env:
           GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
         run: |
