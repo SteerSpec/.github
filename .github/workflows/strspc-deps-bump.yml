@@ -216,7 +216,8 @@ jobs:
                     elif ($n | del(.version, .source)) != ($o | del(.version, .source)) then error("unexpected change to \($n.realm_id)")
                     else
                       ($o.source | sub("@v" + ($o.version | gsub("[.]"; "[.]")) + "(?<r>/|$)"; "@v\($n.version)\(.r)")) as $want
-                      | if $n.source != $want then error("source of \($n.realm_id) is not the old one with the new ref")
+                      | if $want == $o.source then error("source of \($o.realm_id) does not pin @v\($o.version)")
+                        elif $n.source != $want then error("source of \($n.realm_id) is not the old one with the new ref")
                         else {dep: ($o | .version = $n.version | .source = $want), change: "\($n.realm_id): \($o.version) -> \($n.version)"} end
                     end ] as $items
                 | if all($items[]; has("change") | not) then error("artifact differs from the base but upgrades no dependency")
