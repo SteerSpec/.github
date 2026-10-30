@@ -131,8 +131,6 @@ jobs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
           mkdir "$RUNNER_TEMP/bump"
           cp "$file" "$RUNNER_TEMP/bump/realm.json"
-          # Lines look like "  dev.steerspec.core: 1.8.0 -> 1.11.0".
-          grep -- ' -> ' "$RUNNER_TEMP/upgrade.txt" | sed 's/^ *//' > "$RUNNER_TEMP/bump/changes.txt" || true
 
       - name: Hand over the result
         if: steps.upgrade.outputs.changed == 'true'
@@ -188,20 +186,37 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Only a plain JSON object of sane size is accepted.
           [ "$(wc -c < "$bump/realm.json")" -le 1048576 ]
-          jq -e 'type == "object" and has("realm")' "$bump/realm.json" > /dev/null
-          # Every change line must look like "realm.id: 1.8.0 -> 1.11.0".
-          if grep -qvE '^[A-Za-z0-9._-]+: [0-9A-Za-z.+-]+ -> [0-9A-Za-z.+-]+$' "$bump/changes.txt"; then
-            echo "::error::unexpected content in changes.txt"
-            exit 1
-          fi
           gh api "repos/$REPO/contents/$FILE?ref=$SHA" --jq .content | base64 -d > "$RUNNER_TEMP/base-realm.json"
           if cmp -s "$RUNNER_TEMP/base-realm.json" "$bump/realm.json"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          # The artifact is untrusted. Accept it only if it is one JSON
+          # document that differs from the base solely in the version and the
+          # source ref of existing dependencies, and derive the change list
+          # (used for the PR title and body) from that difference.
+          jq -rn --slurpfile a "$bump/realm.json" --slurpfile b "$RUNNER_TEMP/base-realm.json" '
+            def semver: test("^[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.-]+)?$");
+            def noref: sub("@[^/]*"; "@");
+            if ($a | length) != 1 then error("artifact is not a single JSON document") else . end
+            | $a[0] as $A | $b[0] as $B
+            | if ($A | type) != "object" then error("artifact is not an object")
+              elif ($A | del(.dependencies)) != ($B | del(.dependencies)) then error("fields outside dependencies changed")
+              elif ($A.dependencies | map(.realm_id)) != ($B.dependencies | map(.realm_id)) then error("the dependency set changed")
+              else
+                [ range(0; $A.dependencies | length) as $i
+                  | $A.dependencies[$i] as $n | $B.dependencies[$i] as $o
+                  | select($n != $o)
+                  | if ($n.version | semver | not) then error("invalid version for \($n.realm_id)")
+                    elif ($n | del(.version, .source)) != ($o | del(.version, .source)) then error("unexpected change to \($n.realm_id)")
+                    elif ($n.source | noref) != ($o.source | noref) then error("source of \($n.realm_id) changed beyond its ref")
+                    elif ($n.source | test("@v" + ($n.version | gsub("[.]"; "[.]")) + "(/|$)") | not) then error("source ref of \($n.realm_id) does not match its version")
+                    else "\($n.realm_id): \($o.version) -> \($n.version)" end ]
+                | if length == 0 then error("artifact differs from the base but upgrades no dependency") else .[] end
+              end' > "$bump/changes.txt"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Open or update the pull request
         if: steps.diff.outputs.changed == 'true'
@@ -237,7 +252,7 @@ jobs:
             | gh api graphql --input - > /dev/null
 
           # shellcheck disable=SC2016 # backticks are literal Markdown
-          body="$(printf 'Dependency upgrades resolved by `strspc realm dep upgrade`; the realm validates (strict, recursive) with them.\n\n%s\n\nReview the changelog of each dependency before merging. This pull request is refreshed on every run and is never merged automatically.\n' "$(printf '%s\n' "$changes" | sed 's/^/- /')")"
+          body="$(printf 'Dependency upgrades resolved by `strspc realm dep upgrade`. Make sure the repository checks pass on this pull request before merging.\n\n%s\n\nReview the changelog of each dependency before merging. This pull request is refreshed on every run and is never merged automatically.\n' "$(printf '%s\n' "$changes" | sed 's/^/- /')")"
 
           existing="$(gh pr list --head "$BUMP_BRANCH" --base "$BASE_BRANCH" --state open --json number,isCrossRepository \
             --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')"
