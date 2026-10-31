@@ -67,7 +67,9 @@ on:
       STRSPC_GITHUB_TOKEN:
         description: >
           Token for github:// rule sources in private repositories
-          (defaults to the workflow token).
+          (defaults to the workflow token). strspc sends it only to SteerSpec,
+          the repository owner, and the owners in the caller's
+          STRSPC_TOKEN_OWNERS repository variable.
         required: false
 
 permissions:
@@ -151,6 +153,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
           GH_TOKEN: ${{ github.token }}
+          STRSPC_TOKEN_OWNERS: ${{ vars.STRSPC_TOKEN_OWNERS }}
 
       - name: Check rules (static only)
         if: steps.key.outputs.has_key != 'true'
@@ -161,3 +164,4 @@ jobs:
           FORMAT: ${{ inputs.format }}
           GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
           GH_TOKEN: ${{ github.token }}
+          STRSPC_TOKEN_OWNERS: ${{ vars.STRSPC_TOKEN_OWNERS }}
