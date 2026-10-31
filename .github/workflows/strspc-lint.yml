@@ -65,6 +65,14 @@ on:
         type: string
         required: false
         default: D
+    secrets:
+      STRSPC_GITHUB_TOKEN:
+        description: >
+          Token for github:// rule sources in private repositories, used by the
+          refs step (defaults to the workflow token). strspc sends it only to
+          SteerSpec, the repository owner, and the owners in the caller's
+          STRSPC_TOKEN_OWNERS repository variable.
+        required: false
 
 permissions:
   contents: read
@@ -113,6 +121,8 @@ jobs:
           strspc refs "$@"
         env:
           ALLOW_STATE: ${{ inputs.refs-allow-state }}
+          GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
+          STRSPC_TOKEN_OWNERS: ${{ vars.STRSPC_TOKEN_OWNERS }}
 
       - name: Diff rules (pull_request)
         if: inputs.diff && github.event_name == 'pull_request'
