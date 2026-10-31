@@ -19,6 +19,13 @@ name: strspc lint
 # A realm is validated against the schemas of the core version it pins. Only
 # the core realm passes `core: true`, which validates it against its own
 # _schema/ and needs strspc 1.27.0 or later.
+#
+# `refs: true` also validates the rule ids that Markdown files cite, against
+# the repository's .strspc/config.yaml, and needs strspc 1.30.0 or later. It is
+# off by default because a repository may have no config. `refs-allow-state`
+# lists the rule states a citation may name; Draft is allowed by default,
+# because citing a rule still being written isn't wrong. An empty value allows
+# none.
 
 on:
   workflow_call:
@@ -48,6 +55,16 @@ on:
         type: boolean
         required: false
         default: false
+      refs:
+        description: Validate rule citations in Markdown files.
+        type: boolean
+        required: false
+        default: false
+      refs-allow-state:
+        description: Comma-separated rule states a citation may name.
+        type: string
+        required: false
+        default: D
 
 permissions:
   contents: read
@@ -86,6 +103,16 @@ jobs:
           [ "$STRICT" = "true" ] && set -- "$@" --strict
           [ "$CORE" = "true" ] && set -- "$@" --core
           strspc lint "$@"
+
+      - name: Check rule citations
+        if: inputs.refs
+        run: |
+          set -- --format github
+          [ "$STRICT" = "true" ] && set -- "$@" --strict
+          [ -n "$ALLOW_STATE" ] && set -- "$@" --allow-state "$ALLOW_STATE"
+          strspc refs "$@"
+        env:
+          ALLOW_STATE: ${{ inputs.refs-allow-state }}
 
       - name: Diff rules (pull_request)
         if: inputs.diff && github.event_name == 'pull_request'
