@@ -1,0 +1,36 @@
+name: Probe tag move
+
+# Throwaway, never merged. Checks that GITHUB_TOKEN can move a tag across commits
+# that change workflow files, using a probe tag so v1 is not touched.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FROM: 2898af759683a0673989a6818416199e5b195410
+    steps:
+      - name: Create the probe tag
+        run: gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/tags/v1-probe -f "sha=$FROM"
+      - name: Move the probe tag
+        id: move
+        continue-on-error: true
+        run: |
+          to=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/v1-probe" -f "sha=$to" -F force=true
+      - name: Delete the probe tag
+        if: always()
+        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/v1-probe"
+      - name: Report
+        env:
+          OUTCOME: ${{ steps.move.outcome }}
+        run: |
+          echo "move outcome: $OUTCOME"
+          test "$OUTCOME" = success
