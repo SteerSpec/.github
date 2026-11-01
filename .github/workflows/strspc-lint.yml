@@ -25,7 +25,8 @@ name: strspc lint
 # off by default because a repository may have no config. `refs-allow-state`
 # lists the rule states a citation may name; Draft is allowed by default,
 # because citing a rule still being written isn't wrong. An empty value allows
-# none.
+# none. `refs-exclude` lists the globs the check skips, such as test fixtures
+# that cite rules of no real Realm.
 
 on:
   workflow_call:
@@ -65,6 +66,11 @@ on:
         type: string
         required: false
         default: D
+      refs-exclude:
+        description: Comma-separated globs the citation check skips.
+        type: string
+        required: false
+        default: ''
     secrets:
       STRSPC_GITHUB_TOKEN:
         description: >
@@ -118,9 +124,11 @@ jobs:
           set -- --format github
           [ "$STRICT" = "true" ] && set -- "$@" --strict
           [ -n "$ALLOW_STATE" ] && set -- "$@" --allow-state "$ALLOW_STATE"
+          [ -n "$EXCLUDE" ] && set -- "$@" --exclude "$EXCLUDE"
           strspc refs "$@"
         env:
           ALLOW_STATE: ${{ inputs.refs-allow-state }}
+          EXCLUDE: ${{ inputs.refs-exclude }}
           GITHUB_TOKEN: ${{ secrets.STRSPC_GITHUB_TOKEN || github.token }}
           STRSPC_TOKEN_OWNERS: ${{ vars.STRSPC_TOKEN_OWNERS }}
 
