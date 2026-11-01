@@ -29,7 +29,6 @@ flowchart LR
     R["<b>strspc-rules</b><br/>rule format and schemas"]
     M["<b>strspc-manager</b><br/>enforcement engine"]
     C["<b>strspc-CLI</b><br/>command line"]
-    S["<b>strspc-sync</b><br/>fleet distribution"]
     K["<b>strspc-cloud</b><br/>hosted service, planned"]
 
     R -->|consumed by| M
@@ -38,7 +37,7 @@ flowchart LR
 
     classDef shipped fill:#1f6feb,stroke:#1f6feb,color:#ffffff
     classDef planned fill:#6e7781,stroke:#6e7781,color:#ffffff
-    class R,M,C,S shipped
+    class R,M,C shipped
     class K planned
 ```
 
@@ -70,15 +69,19 @@ SteerSpec is under active development, and much of it ships today.
 | CLI | Renders, lints and diffs rule files; AI evaluation of changes is planned |
 | Hosted API | Planned, not yet built |
 
-The specification itself remains `v0.1.0-draft` — the tooling is further along than the spec it
-implements. Things will change. Feedback welcome.
+Things will change. Feedback welcome.
 
 ## Get started
 
 ```bash
-brew install --cask SteerSpec/tap/strspc
+brew tap SteerSpec/tap
+brew trust --cask steerspec/tap/strspc
+brew install --cask strspc
 strspc init
 ```
+
+Recent Homebrew refuses casks from untrusted taps, so the `brew trust` step is needed once. See
+[Tap Trust](https://docs.brew.sh/Tap-Trust).
 
 Full docs and guides live at **[steerspec.dev](https://steerspec.dev)**.
 
