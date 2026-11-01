@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/SteerSpec/.github/compare/v1.1.1...v1.2.0) (2026-11-01)
+
+
+### Features
+
+* **deps-bump:** commit _schema files synced by realm dep upgrade ([4f37788](https://github.com/SteerSpec/.github/commit/4f37788ebff573d214e75223213171a8f3829cb6))
+* **deps-bump:** commit _schema files synced by realm dep upgrade ([b4cc02f](https://github.com/SteerSpec/.github/commit/b4cc02fc75990e3560cc15a25f3ee810a15d88c0))
+
+
+### Bug Fixes
+
+* **deps-bump:** commit schema bytes from the core release, not the artifact ([50bdd85](https://github.com/SteerSpec/.github/commit/50bdd85900ad28835c3fcdb47de73b3ad8f10176))
+
 ## [1.1.1](https://github.com/SteerSpec/.github/compare/v1.1.0...v1.1.1) (2026-11-01)
 
 
