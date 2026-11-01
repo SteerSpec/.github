@@ -219,7 +219,7 @@ jobs:
             exit 0
           fi
 
-          # The artifact is untrusted and is never committed. It only says
+          # The artifact is untrusted and none of its bytes are committed. It only says
           # which dependencies moved to which version. Each move must be a
           # strict upgrade to a plain X.Y.Z, and the new source must be the
           # old one with only its @vX.Y.Z ref replaced. The committed file is
@@ -252,21 +252,32 @@ jobs:
           jq -r '.changes[]' "$RUNNER_TEMP/checked.json" > "$bump/changes.txt"
           jq --indent 2 '.out' "$RUNNER_TEMP/checked.json" > "$bump/checked-realm.json"
 
-          # Schema files are accepted only when dev.steerspec.core moved, only
-          # for names the base already holds directly under _schema/, and only
-          # as JSON. Anything else is dropped, not committed.
+          # The artifact is only allowed to name _schema files; their bytes are
+          # never taken from it. For each name the base already holds directly
+          # under _schema/, the content is fetched from the dev.steerspec.core
+          # source at the new tag in the rebuilt realm.json, and committed only
+          # if it differs from the base as JSON. This applies only when core
+          # moved.
           sdir="$(realpath -m --relative-to=/ "/$(dirname "$FILE")/_schema")"
           : > "$bump/schema-paths.txt"
-          if grep -q '^dev[.]steerspec[.]core:' "$bump/changes.txt" && [ -d "$bump/schema" ]; then
+          mkdir -p "$bump/schema-verified"
+          core_src="$(jq -r '.out.dependencies[] | select(.realm_id == "dev.steerspec.core") | .source' "$RUNNER_TEMP/checked.json")"
+          re='^github://([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)@(v[0-9]+[.][0-9]+[.][0-9]+)/([A-Za-z0-9_./-]+)$'
+          if grep -q '^dev[.]steerspec[.]core:' "$bump/changes.txt" && [ -d "$bump/schema" ] \
+            && [[ "$core_src" =~ $re ]] && [[ "${BASH_REMATCH[4]}" != *..* ]]; then
+            core_repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+            core_ref="${BASH_REMATCH[3]}"
+            core_path="${BASH_REMATCH[4]%/}"
             for f in "$bump"/schema/*.json; do
               [ -f "$f" ] && [ ! -L "$f" ] || continue
               name="$(basename "$f")"
               [[ "$name" =~ ^[A-Za-z0-9._-]+[.]json$ ]] || continue
-              [ "$(wc -c < "$f")" -le 1048576 ] || continue
-              jq -e . "$f" > /dev/null || continue
               gh api "repos/$REPO/contents/$sdir/$name?ref=$SHA" --jq .content 2> /dev/null | base64 -d > "$RUNNER_TEMP/base-schema.json" || continue
               [ -s "$RUNNER_TEMP/base-schema.json" ] || continue
-              cmp -s "$RUNNER_TEMP/base-schema.json" "$f" && continue
+              gh api "repos/$core_repo/contents/$core_path/_schema/$name?ref=$core_ref" --jq .content 2> /dev/null | base64 -d > "$bump/schema-verified/$name" || continue
+              [ -s "$bump/schema-verified/$name" ] && [ "$(wc -c < "$bump/schema-verified/$name")" -le 1048576 ] || continue
+              jq -e . "$bump/schema-verified/$name" > /dev/null 2>&1 || continue
+              [ "$(jq -S . "$bump/schema-verified/$name")" = "$(jq -S . "$RUNNER_TEMP/base-schema.json")" ] && continue
               echo "$name" >> "$bump/schema-paths.txt"
             done
           fi
@@ -293,14 +304,15 @@ jobs:
             gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BUMP_BRANCH" -f sha="$SHA" > /dev/null
           fi
 
-          # realm.json plus any _schema files that passed the checks above.
+          # realm.json (rebuilt from the base) plus the _schema files fetched from the
+          # core release above, never the artifact's own bytes.
           sdir="$(realpath -m --relative-to=/ "/$(dirname "$FILE")/_schema")"
           {
             jq -n --arg path "$FILE" --arg contents "$(base64 < "$bump/checked-realm.json" | tr -d '\n')" \
               '{path: $path, contents: $contents}'
             while IFS= read -r name; do
               [ -n "$name" ] || continue
-              jq -n --arg path "$sdir/$name" --arg contents "$(base64 < "$bump/schema/$name" | tr -d '\n')" \
+              jq -n --arg path "$sdir/$name" --arg contents "$(base64 < "$bump/schema-verified/$name" | tr -d '\n')" \
                 '{path: $path, contents: $contents}'
             done < "$bump/schema-paths.txt"
           } | jq -s '.' > "$RUNNER_TEMP/additions.json"
@@ -316,8 +328,12 @@ jobs:
                 fileChanges: {additions: $additions[0]}}}}' \
             | gh api graphql --input - > /dev/null
 
+          schemas=""
+          if [ -s "$bump/schema-paths.txt" ]; then
+            schemas="$(printf '\nSchema files copied from the new core release:\n%s\n' "$(sed "s|^|- $sdir/|" "$bump/schema-paths.txt")")"
+          fi
           # shellcheck disable=SC2016 # backticks are literal Markdown
-          body="$(printf 'Dependency upgrades resolved by `strspc realm dep upgrade`. Make sure the repository checks pass on this pull request before merging.\n\n%s\n\nReview the changelog of each dependency before merging. This pull request is refreshed on every run and is never merged automatically.\n' "$(printf '%s\n' "$changes" | sed 's/^/- /')")"
+          body="$(printf 'Dependency upgrades resolved by `strspc realm dep upgrade`. Make sure the repository checks pass on this pull request before merging.\n\n%s\n%s\nReview the changelog of each dependency before merging. This pull request is refreshed on every run and is never merged automatically.\n' "$(printf '%s\n' "$changes" | sed 's/^/- /')" "$schemas")"
 
           existing="$(gh pr list --head "$BUMP_BRANCH" --base "$BASE_BRANCH" --state open --json number,isCrossRepository \
             --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')"
