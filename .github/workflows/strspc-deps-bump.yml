@@ -139,8 +139,22 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          mkdir "$RUNNER_TEMP/bump"
+          mkdir -p "$RUNNER_TEMP/bump/schema"
           cp "$file" "$RUNNER_TEMP/bump/realm.json"
+          # An upgrade of dev.steerspec.core also syncs _schema/*.json (RM015).
+          # Hand over only modified files directly under _schema/; the pr job
+          # re-checks each one.
+          sdir="$(realpath -m --relative-to="$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/$(dirname "$file")/_schema")"
+          git diff --name-only --diff-filter=M -- "$sdir" | while IFS= read -r f; do
+            case "$f" in
+              "$sdir"/*/*|*[!A-Za-z0-9._/-]*) continue ;;
+              *.json) ;;
+              *) continue ;;
+            esac
+            if [ -f "$f" ] && [ ! -L "$f" ]; then
+              cp "$f" "$RUNNER_TEMP/bump/schema/$(basename "$f")"
+            fi
+          done
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Hand over the result
@@ -237,6 +251,25 @@ jobs:
               end' > "$RUNNER_TEMP/checked.json"
           jq -r '.changes[]' "$RUNNER_TEMP/checked.json" > "$bump/changes.txt"
           jq --indent 2 '.out' "$RUNNER_TEMP/checked.json" > "$bump/checked-realm.json"
+
+          # Schema files are accepted only when dev.steerspec.core moved, only
+          # for names the base already holds directly under _schema/, and only
+          # as JSON. Anything else is dropped, not committed.
+          sdir="$(realpath -m --relative-to=/ "/$(dirname "$FILE")/_schema")"
+          : > "$bump/schema-paths.txt"
+          if grep -q '^dev[.]steerspec[.]core:' "$bump/changes.txt" && [ -d "$bump/schema" ]; then
+            for f in "$bump"/schema/*.json; do
+              [ -f "$f" ] && [ ! -L "$f" ] || continue
+              name="$(basename "$f")"
+              [[ "$name" =~ ^[A-Za-z0-9._-]+[.]json$ ]] || continue
+              [ "$(wc -c < "$f")" -le 1048576 ] || continue
+              jq -e . "$f" > /dev/null || continue
+              gh api "repos/$REPO/contents/$sdir/$name?ref=$SHA" --jq .content 2> /dev/null | base64 -d > "$RUNNER_TEMP/base-schema.json" || continue
+              [ -s "$RUNNER_TEMP/base-schema.json" ] || continue
+              cmp -s "$RUNNER_TEMP/base-schema.json" "$f" && continue
+              echo "$name" >> "$bump/schema-paths.txt"
+            done
+          fi
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Open or update the pull request
@@ -260,16 +293,27 @@ jobs:
             gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BUMP_BRANCH" -f sha="$SHA" > /dev/null
           fi
 
+          # realm.json plus any _schema files that passed the checks above.
+          sdir="$(realpath -m --relative-to=/ "/$(dirname "$FILE")/_schema")"
+          {
+            jq -n --arg path "$FILE" --arg contents "$(base64 < "$bump/checked-realm.json" | tr -d '\n')" \
+              '{path: $path, contents: $contents}'
+            while IFS= read -r name; do
+              [ -n "$name" ] || continue
+              jq -n --arg path "$sdir/$name" --arg contents "$(base64 < "$bump/schema/$name" | tr -d '\n')" \
+                '{path: $path, contents: $contents}'
+            done < "$bump/schema-paths.txt"
+          } | jq -s '.' > "$RUNNER_TEMP/additions.json"
+
           jq -n \
             --arg repo "$REPO" --arg branch "$BUMP_BRANCH" --arg oid "$SHA" \
-            --arg headline "$title" --arg path "$FILE" \
-            --arg contents "$(base64 < "$bump/checked-realm.json" | tr -d '\n')" \
+            --arg headline "$title" --slurpfile additions "$RUNNER_TEMP/additions.json" \
             '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
               variables: {input: {
                 branch: {repositoryNameWithOwner: $repo, branchName: $branch},
                 expectedHeadOid: $oid,
                 message: {headline: $headline},
-                fileChanges: {additions: [{path: $path, contents: $contents}]}}}}' \
+                fileChanges: {additions: $additions[0]}}}}' \
             | gh api graphql --input - > /dev/null
 
           # shellcheck disable=SC2016 # backticks are literal Markdown
