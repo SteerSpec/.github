@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.1](https://github.com/SteerSpec/.github/compare/v1.1.0...v1.1.1) (2026-11-01)
+
+
+### Workflows
+
+* move the caller header to v1.10.0 ([578c149](https://github.com/SteerSpec/.github/commit/578c149e88038c74aaddc8bbecb5779d9e3de255))
+* sync auto-approve caller to the v1.10.0 template ([4ca033d](https://github.com/SteerSpec/.github/commit/4ca033db93ade7fc2309154611162b5950b50d90))
+* sync auto-approve caller to the v1.10.0 template ([be0b8a8](https://github.com/SteerSpec/.github/commit/be0b8a83df7c68dbb6702e6e301e82687b7c44f7))
+
 ## [1.1.0](https://github.com/SteerSpec/.github/compare/v1.0.0...v1.1.0) (2026-11-01)
 
 
