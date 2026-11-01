@@ -1,0 +1,55 @@
+name: Release Please
+
+# Keeps a release PR open from the conventional commits on main. Merging it
+# creates the vX.Y.Z tag and GitHub release. Callers pin @v1, and a change to a
+# reusable workflow reaches them on their next run, so move-v1 moves that tag
+# only when a release PR is merged. A 2.0.0 leaves v1 where it is.
+
+on:
+  push:
+    branches: [main]
+
+# The App token and the move-v1 job carry what they need.
+permissions: {}
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      major: ${{ steps.release.outputs.major }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - name: Mint a GitHub App token
+        # steerspec-sync App: its PRs trigger CI and auto-approve (unlike GITHUB_TOKEN),
+        # its API commits are GitHub-signed (required_signatures) and its author
+        # steerspec-sync[bot] is not the approving bot, so auto-approve can act.
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        with:
+          app-id: ${{ secrets.STEERSPEC_APP_ID }}
+          private-key: ${{ secrets.STEERSPEC_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7  # v5.0.0
+        with:
+          token: ${{ steps.app.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  move-v1:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true' && needs.release-please.outputs.major == '1'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Move v1 to the release
+        # Through the refs API, not git push: GITHUB_TOKEN can't push a ref whose
+        # commit touches .github/workflows, and releases here always do.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
+        run: gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/v1" -f "sha=$RELEASE_SHA" -F force=true
