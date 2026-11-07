@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/SteerSpec/.github/compare/v1.2.0...v1.2.1) (2026-11-07)
+
+
+### Documentation
+
+* **readme:** show the transparent logo ([07fb14a](https://github.com/SteerSpec/.github/commit/07fb14accf4950b5e3270b4720044d9dcc74881e))
+* **readme:** show the transparent logo ([6cfcd94](https://github.com/SteerSpec/.github/commit/6cfcd94d54b5fed4511423f69c02fc8ab1d26f31))
+
 ## [1.2.0](https://github.com/SteerSpec/.github/compare/v1.1.1...v1.2.0) (2026-11-01)
 
 
