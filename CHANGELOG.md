@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0](https://github.com/SteerSpec/.github/compare/v1.2.1...v1.3.0) (2026-11-27)
+
+
+### Features
+
+* add a reusable workflow that syncs a release back into develop ([2bafe9a](https://github.com/SteerSpec/.github/commit/2bafe9a2e364a5fefac7adb97ebe5d39970b5381))
+* add a reusable workflow that syncs a release back into develop ([73a285f](https://github.com/SteerSpec/.github/commit/73a285f2c768f7383513bdb15d64c41df3bb2901))
+
+
+### Bug Fixes
+
+* keep a sync branch with commits of its own when closing a stale PR ([a68e3a4](https://github.com/SteerSpec/.github/commit/a68e3a4c70f344556087aa37bedf5e3e83d1f5cc))
+
 ## [1.2.1](https://github.com/SteerSpec/.github/compare/v1.2.0...v1.2.1) (2026-11-07)
 
 
