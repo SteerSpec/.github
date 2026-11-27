@@ -1,0 +1,207 @@
+name: Sync back
+
+# Reusable workflow: after a release on main, open a pull request that carries
+# main's release commits (CHANGELOG.md, the version bump, the release-please
+# manifest) back into develop. Without it develop never sees them, reports a
+# stale version, and drifts further from main with every release.
+#
+# The workflow never authors a commit. It points a sync branch at the source
+# commit, which is already signed, and opens or updates one pull request from
+# it. It never merges.
+#
+# Caller (a repository that promotes develop to main and releases from main),
+# as a job after the release job, gated on the release being created:
+#
+#   sync-back:
+#     needs: release-please
+#     if: needs.release-please.outputs.release_created == 'true'
+#     permissions:
+#       contents: read
+#     uses: SteerSpec/.github/.github/workflows/sync-back.yml@v1
+#     with:
+#       sha: ${{ needs.release-please.outputs.sha }}
+#     secrets:
+#       STEERSPEC_APP_ID: ${{ secrets.STEERSPEC_APP_ID }}
+#       STEERSPEC_PRIVATE_KEY: ${{ secrets.STEERSPEC_PRIVATE_KEY }}
+#
+# The pull request is opened with a steerspec-sync App token: one opened with
+# the workflow token gets no check runs, so auto-approve could never pass it.
+# A target branch that only allows squash merges levels the content, not the
+# history: `git log target..source` keeps listing main's commits after a sync.
+# That is harmless, because the next promotion merges identical changes.
+
+on:
+  workflow_call:
+    inputs:
+      source-branch:
+        description: Branch the release lives on.
+        type: string
+        required: false
+        default: main
+      target-branch:
+        description: Branch the release is carried back into.
+        type: string
+        required: false
+        default: develop
+      sha:
+        description: Commit to sync. Empty uses the head of source-branch.
+        type: string
+        required: false
+        default: ""
+      branch:
+        description: Sync branch, pointed at the commit on every run.
+        type: string
+        required: false
+        default: chore/sync-main-to-develop
+      title:
+        description: Pull request title. Use a type that does not release.
+        type: string
+        required: false
+        default: "chore: sync main into develop"
+    secrets:
+      STEERSPEC_APP_ID:
+        description: steerspec-sync App id.
+        required: true
+      STEERSPEC_PRIVATE_KEY:
+        description: steerspec-sync App private key.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # One run at a time per sync branch: overlapping runs would move the same ref.
+    concurrency:
+      group: sync-back-${{ github.repository }}-${{ inputs.branch }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      REPO: ${{ github.repository }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE: ${{ inputs.source-branch }}
+      TARGET: ${{ inputs.target-branch }}
+      SYNC_BRANCH: ${{ inputs.branch }}
+      TITLE: ${{ inputs.title }}
+    steps:
+      - name: Mint a GitHub App token
+        id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc  # v3.4.0
+        with:
+          app-id: ${{ secrets.STEERSPEC_APP_ID }}
+          private-key: ${{ secrets.STEERSPEC_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          ref: ${{ inputs.target-branch }}
+          # Full history of every branch, so the source is there to compare.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide whether the target lacks anything
+        id: plan
+        env:
+          SHA_INPUT: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          git rev-parse --verify --quiet "origin/$SOURCE" > /dev/null || { echo "::error::no branch $SOURCE"; exit 1; }
+          sha="${SHA_INPUT:-$(git rev-parse "origin/$SOURCE")}"
+          sha="$(git rev-parse --verify "$sha^{commit}")"
+          if ! git merge-base --is-ancestor "$sha" "origin/$SOURCE"; then
+            echo "::error::$sha is not on $SOURCE"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+          # Content, not ancestry: after a squash merge the target never holds
+          # the source commits, yet it may already hold every change they made.
+          # The sync is needed only if merging the commit would change the target.
+          set +e
+          out="$(git merge-tree --write-tree "origin/$TARGET" "$sha")"
+          rc=$?
+          set -e
+          merged="$(printf '%s\n' "$out" | head -n 1)"
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::git merge-tree failed"
+            exit 1
+          fi
+          conflict=false
+          [ "$rc" -eq 1 ] && conflict=true
+          echo "conflict=$conflict" >> "$GITHUB_OUTPUT"
+          if [ "$conflict" = false ] && [ "$merged" = "$(git rev-parse "origin/$TARGET^{tree}")" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Point the sync branch at the commit
+        if: steps.plan.outputs.needed == 'true'
+        id: branch
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SHA: ${{ steps.plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          head="$(gh api "repos/$REPO/git/ref/heads/$SYNC_BRANCH" --jq .object.sha 2> /dev/null || true)"
+          if [ -z "$head" ]; then
+            gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$SYNC_BRANCH" -f sha="$SHA" > /dev/null
+          elif [ "$head" = "$SHA" ]; then
+            :
+          elif [ "$(gh api "repos/$REPO/compare/$head...$SHA" --jq .status)" = ahead ]; then
+            gh api -X PATCH "repos/$REPO/git/refs/heads/$SYNC_BRANCH" -f sha="$SHA" > /dev/null
+          else
+            # The branch has commits of its own, most likely a conflict
+            # resolution. Moving it would drop them.
+            echo "::warning::$SYNC_BRANCH has commits that are not on $SOURCE; left as is. Merge $SHA into it by hand."
+            echo "moved=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "moved=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the pull request
+        if: steps.plan.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SHA: ${{ steps.plan.outputs.sha }}
+          CONFLICT: ${{ steps.plan.outputs.conflict }}
+          MOVED: ${{ steps.branch.outputs.moved }}
+        run: |
+          set -euo pipefail
+          bt='`'
+          body="Carries ${bt}$SOURCE${bt} back into ${bt}$TARGET${bt} at $SHA, so it holds the release commits: changelog, version bump and release manifest."
+          if [ "$CONFLICT" = true ]; then
+            body="$body
+
+          **Conflicts.** Merge ${bt}$TARGET${bt} into ${bt}$SYNC_BRANCH${bt} locally, resolve, and push the resolution to this branch with a signed commit."
+          fi
+          if [ "$MOVED" = false ]; then
+            body="$body
+
+          **Not moved.** This branch has commits of its own, so it was not pointed at ${bt}$SHA${bt}. Merge that commit into it by hand."
+          fi
+          body="$body
+
+          Squash it: the title does not release. This pull request is refreshed after every release and is never merged automatically."
+          existing="$(gh pr list --head "$SYNC_BRANCH" --base "$TARGET" --state open --json number,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$TITLE" --body "$body"
+            echo "Updated pull request #$existing"
+          else
+            gh pr create --base "$TARGET" --head "$SYNC_BRANCH" --title "$TITLE" --body "$body"
+          fi
+
+      - name: Close a stale sync pull request
+        if: steps.plan.outputs.needed == 'false'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          stale="$(gh pr list --head "$SYNC_BRANCH" --base "$TARGET" --state open --json number,isCrossRepository \
+            --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')"
+          [ -z "$stale" ] || gh pr close "$stale" --delete-branch \
+            --comment "$TARGET already holds everything on $SOURCE; closing."
