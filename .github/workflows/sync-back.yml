@@ -199,9 +199,22 @@ jobs:
         if: steps.plan.outputs.needed == 'false'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          SHA: ${{ steps.plan.outputs.sha }}
         run: |
           set -euo pipefail
           stale="$(gh pr list --head "$SYNC_BRANCH" --base "$TARGET" --state open --json number,isCrossRepository \
             --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')"
-          [ -z "$stale" ] || gh pr close "$stale" --delete-branch \
-            --comment "$TARGET already holds everything on $SOURCE; closing."
+          [ -n "$stale" ] || exit 0
+          # Delete the branch only if everything on it is also on the source.
+          # Commits of its own, such as a conflict resolution, stay on the branch.
+          head="$(gh api "repos/$REPO/git/ref/heads/$SYNC_BRANCH" --jq .object.sha 2> /dev/null || true)"
+          status=""
+          [ -z "$head" ] || status="$(gh api "repos/$REPO/compare/$head...$SHA" --jq .status)"
+          if [ -z "$head" ] || [ "$status" = ahead ] || [ "$status" = identical ]; then
+            gh pr close "$stale" --delete-branch \
+              --comment "$TARGET already holds everything on $SOURCE; closing."
+          else
+            echo "::warning::$SYNC_BRANCH has commits that are not on $SOURCE; closing the pull request but keeping the branch."
+            gh pr close "$stale" \
+              --comment "$TARGET already holds everything on $SOURCE; closing. $SYNC_BRANCH has commits that are not on $SOURCE, so it is kept."
+          fi
