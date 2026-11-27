@@ -26,7 +26,7 @@ visit [steerspec.dev](https://steerspec.dev).
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Community standards |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability |
 | [`LICENSE`](LICENSE) | Apache 2.0 |
-| [`.github/workflows/`](.github/workflows) | CI: markdown lint, link integrity, SteerSpec checks, PR auto-approve |
+| [`.github/workflows/`](.github/workflows) | CI: markdown lint, link integrity, SteerSpec checks, PR auto-approve, release sync-back |
 
 ## How defaults apply
 
