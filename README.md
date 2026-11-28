@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://steerspec.dev/assets/logo.svg" alt="SteerSpec logo" width="72" height="72">
+<img src="https://steerspec.dev/assets/logo-transparent.svg" alt="SteerSpec logo" width="96" height="96">
 
 # SteerSpec community health files
 
