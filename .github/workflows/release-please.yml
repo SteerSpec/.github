@@ -36,6 +36,9 @@ jobs:
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7  # v5.0.0
         with:
           token: ${{ steps.app.outputs.token }}
+          # The default branch is develop; releases are cut from main, the
+          # promotion target.
+          target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
@@ -53,3 +56,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
         run: gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/v1" -f "sha=$RELEASE_SHA" -F force=true
+
+  # main's release commits (changelog, manifest) never reach develop otherwise.
+  # Opens a squash-only sync PR into develop; never merges. A local reference,
+  # so the workflow comes from this release commit, not from a movable tag.
+  sync-back:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/sync-back.yml
+    with:
+      sha: ${{ needs.release-please.outputs.sha }}
+    secrets:
+      STEERSPEC_APP_ID: ${{ secrets.STEERSPEC_APP_ID }}
+      STEERSPEC_PRIVATE_KEY: ${{ secrets.STEERSPEC_PRIVATE_KEY }}
