@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.1](https://github.com/SteerSpec/.github/compare/v1.3.0...v1.3.1) (2026-11-28)
+
+
+### Workflows
+
+* move v1 with the App token the tag ruleset allows ([b455c30](https://github.com/SteerSpec/.github/commit/b455c30529dfc0add0c36ecbb923b55924cfd9e6))
+* release from main and promote from develop ([ddf0813](https://github.com/SteerSpec/.github/commit/ddf0813bac2d2f28894b2b056d64a7d6affe63b3))
+* release from main and promote from develop ([bfc0231](https://github.com/SteerSpec/.github/commit/bfc02315e81ca8041dfa65b9b3a5c665b43a8b70))
+
 ## [1.3.0](https://github.com/SteerSpec/.github/compare/v1.2.1...v1.3.0) (2026-11-27)
 
 
