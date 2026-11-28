@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/SteerSpec/.github/compare/v1.3.1...v1.3.2) (2026-11-28)
+
+
+### Bug Fixes
+
+* create the sync branch when it does not exist yet ([#30](https://github.com/SteerSpec/.github/issues/30)) ([350df2d](https://github.com/SteerSpec/.github/commit/350df2df40c707913587fca50e7866771977dbdb))
+
 ## [1.3.1](https://github.com/SteerSpec/.github/compare/v1.3.0...v1.3.1) (2026-11-28)
 
 
