@@ -146,10 +146,22 @@ jobs:
           SHA: ${{ steps.plan.outputs.sha }}
         run: |
           set -euo pipefail
-          # A missing ref makes gh api fail and print the 404 body on stdout, so
-          # keep the output only when the call succeeded and returned a SHA.
-          head="$(gh api "repos/$REPO/git/ref/heads/$SYNC_BRANCH" --jq .object.sha 2> /dev/null)" || head=""
-          [[ "$head" =~ ^[0-9a-f]{40}$ ]] || head=""
+          # Empty only for a 404. gh api prints the error body on stdout, so a
+          # failed lookup must not be read as a SHA, and any other failure
+          # (5xx, rate limit, auth) stops the step instead of passing for absence.
+          branch_sha() {
+            local out
+            if out="$(gh api "repos/$REPO/git/ref/heads/$SYNC_BRANCH" --jq .object.sha 2> /dev/null)"; then
+              [[ "$out" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::unexpected lookup result for $SYNC_BRANCH" >&2; return 1; }
+              printf '%s' "$out"
+            elif [[ "$out" == *'"status":"404"'* ]]; then
+              :
+            else
+              echo "::error::cannot look up $SYNC_BRANCH: $out" >&2
+              return 1
+            fi
+          }
+          head="$(branch_sha)"
           if [ -z "$head" ]; then
             gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$SYNC_BRANCH" -f sha="$SHA" > /dev/null
           elif [ "$head" = "$SHA" ]; then
@@ -210,10 +222,22 @@ jobs:
           [ -n "$stale" ] || exit 0
           # Delete the branch only if everything on it is also on the source.
           # Commits of its own, such as a conflict resolution, stay on the branch.
-          # A missing ref makes gh api fail and print the 404 body on stdout, so
-          # keep the output only when the call succeeded and returned a SHA.
-          head="$(gh api "repos/$REPO/git/ref/heads/$SYNC_BRANCH" --jq .object.sha 2> /dev/null)" || head=""
-          [[ "$head" =~ ^[0-9a-f]{40}$ ]] || head=""
+          # Empty only for a 404. gh api prints the error body on stdout, so a
+          # failed lookup must not be read as a SHA, and any other failure
+          # (5xx, rate limit, auth) stops the step instead of passing for absence.
+          branch_sha() {
+            local out
+            if out="$(gh api "repos/$REPO/git/ref/heads/$SYNC_BRANCH" --jq .object.sha 2> /dev/null)"; then
+              [[ "$out" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::unexpected lookup result for $SYNC_BRANCH" >&2; return 1; }
+              printf '%s' "$out"
+            elif [[ "$out" == *'"status":"404"'* ]]; then
+              :
+            else
+              echo "::error::cannot look up $SYNC_BRANCH: $out" >&2
+              return 1
+            fi
+          }
+          head="$(branch_sha)"
           status=""
           [ -z "$head" ] || status="$(gh api "repos/$REPO/compare/$head...$SHA" --jq .status)"
           if [ -z "$head" ] || [ "$status" = ahead ] || [ "$status" = identical ]; then
