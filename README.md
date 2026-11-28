@@ -41,7 +41,8 @@ a merge commit, carries the bundle to `main`. release-please then opens a releas
 `vX.Y.Z`, moves `v1`, and opens a pull request that syncs the release back into `develop`.
 
 Callers that pin `@main` see only promoted workflows, and callers that pin `@v1` only released ones.
-Release tags cannot be moved or deleted, and only the release workflow can move `v1`.
+Release tags cannot be moved or deleted, and only the steerspec-sync App, used by the release
+workflow, can move `v1`.
 
 ## Contributing
 
