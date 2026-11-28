@@ -9,7 +9,7 @@
 [![CI](https://github.com/SteerSpec/.github/actions/workflows/ci.yml/badge.svg)](https://github.com/SteerSpec/.github/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-[Contents](#contents) · [How defaults apply](#how-defaults-apply) · [Contributing](#contributing)
+[Contents](#contents) · [How defaults apply](#how-defaults-apply) · [Branches and releases](#branches-and-releases) · [Contributing](#contributing)
 
 </div>
 
@@ -32,6 +32,17 @@ visit [steerspec.dev](https://steerspec.dev).
 
 A repository inherits these files unless it ships its own copy. A repo's own file always wins, so
 override per repo whenever the org default doesn't fit.
+
+## Branches and releases
+
+`develop` is the default branch. Pull requests go to `develop` and are squashed, so the PR title
+becomes the commit release-please reads. A `chore: promote develop to main` pull request, merged with
+a merge commit, carries the bundle to `main`. release-please then opens a release PR; merging it tags
+`vX.Y.Z`, moves `v1`, and opens a pull request that syncs the release back into `develop`.
+
+Callers that pin `@main` see only promoted workflows, and callers that pin `@v1` only released ones.
+Release tags cannot be moved or deleted, and only the steerspec-sync App, used by the release
+workflow, can move `v1`.
 
 ## Contributing
 

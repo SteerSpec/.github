@@ -9,9 +9,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+    # edited: the title is checked below, and it can change right before a squash.
+    types: [opened, edited, synchronize, reopened]
 
 permissions:
   contents: read
@@ -56,3 +58,23 @@ jobs:
             done < <(grep -oE '\]\([^)]+\)' "$f" | sed 's/^](//; s/)$//')
           done < <(find . -name '*.md' -not -path './.git/*')
           exit $rc
+
+  # PRs are squashed into develop, so the title becomes the commit release-please
+  # reads, and a mistyped title is a wrong release.
+  commits:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@c5e23b7e584519ee15caa684cf60d056aa9f035f  # v6.1.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Title length
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if [ "${#TITLE}" -gt 120 ]; then
+            echo "::error::PR title is ${#TITLE} characters, the limit is 120"
+            exit 1
+          fi
